@@ -6,384 +6,31 @@
  * found in the LICENSE file at https://angular.io/license
  */
 
+import * as fs from 'fs';
 import * as ts from 'typescript';
-import {ClassMemberKind, Import} from '../../../ngtsc/host';
+
+import {DtsMapper} from '../../src/host/dts_mapper';
 import {Esm2015ReflectionHost} from '../../src/host/esm2015_host';
 import {getDeclaration, makeProgram} from '../helpers/utils';
 
-const SOME_DIRECTIVE_FILE = {
-  name: '/some_directive.js',
-  contents: `
-    import { Directive, Inject, InjectionToken, Input, HostListener, HostBinding } from '@angular/core';
-
-    const INJECTED_TOKEN = new InjectionToken('injected');
-    const ViewContainerRef = {};
-    const TemplateRef = {};
-
-    class SomeDirective {
-      constructor(_viewContainer, _template, injected) {
-        this.instanceProperty = 'instance';
-      }
-      instanceMethod() {}
-
-      onClick() {}
-
-      @HostBinding('class.foo')
-      get isClassFoo() { return false; }
-
-      static staticMethod() {}
-    }
-    SomeDirective.staticProperty = 'static';
-    SomeDirective.decorators = [
-      { type: Directive, args: [{ selector: '[someDirective]' },] }
-    ];
-    SomeDirective.ctorParameters = () => [
-      { type: ViewContainerRef, },
-      { type: TemplateRef, },
-      { type: undefined, decorators: [{ type: Inject, args: [INJECTED_TOKEN,] },] },
-    ];
-    SomeDirective.propDecorators = {
-      "input1": [{ type: Input },],
-      "input2": [{ type: Input },],
-      "target": [{ type: HostBinding, args: ['attr.target',] }, { type: Input },],
-      "onClick": [{ type: HostListener, args: ['click',] },],
-    };
-  `,
-};
-
-const SIMPLE_CLASS_FILE = {
-  name: '/simple_class.js',
-  contents: `
-    class EmptyClass {}
-    class NoDecoratorConstructorClass {
-      constructor(foo) {}
-    }
-  `,
-};
-
-const FOO_FUNCTION_FILE = {
-  name: '/foo_function.js',
-  contents: `
-    import { Directive } from '@angular/core';
-
-    function foo() {}
-    foo.decorators = [
-      { type: Directive, args: [{ selector: '[ignored]' },] }
-    ];
-  `,
-};
-
-const INVALID_DECORATORS_FILE = {
-  name: '/invalid_decorators.js',
-  contents: `
-    const NotArrayLiteralDecorator = {};
-    class NotArrayLiteral {
-    }
-    NotArrayLiteral.decorators = () => [
-      { type: NotArrayLiteralDecorator, args: [{ selector: '[ignored]' },] },
-    ];
-
-    const NotObjectLiteralDecorator = {};
-    class NotObjectLiteral {
-    }
-    NotObjectLiteral.decorators = [
-      "This is not an object literal",
-      { type: NotObjectLiteralDecorator },
-    ];
-
-    const NoTypePropertyDecorator1 = {};
-    const NoTypePropertyDecorator2 = {};
-    class NoTypeProperty {
-    }
-    NoTypeProperty.decorators = [
-      { notType: NoTypePropertyDecorator1 },
-      { type: NoTypePropertyDecorator2 },
-    ];
-
-    const NotIdentifierDecorator = {};
-    class NotIdentifier {
-    }
-    NotIdentifier.decorators = [
-      { type: 'StringsLiteralsAreNotIdentifiers' },
-      { type: NotIdentifierDecorator },
-    ];
-  `,
-};
-
-const INVALID_DECORATOR_ARGS_FILE = {
-  name: '/invalid_decorator_args.js',
-  contents: `
-    const NoArgsPropertyDecorator = {};
-    class NoArgsProperty {
-    }
-    NoArgsProperty.decorators = [
-      { type: NoArgsPropertyDecorator },
-    ];
-
-    const NoPropertyAssignmentDecorator = {};
-    const args = [{ selector: '[ignored]' },];
-    class NoPropertyAssignment {
-    }
-    NoPropertyAssignment.decorators = [
-      { type: NoPropertyAssignmentDecorator, args },
-    ];
-
-    const NotArrayLiteralDecorator = {};
-    class NotArrayLiteral {
-    }
-    NotArrayLiteral.decorators = [
-      { type: NotArrayLiteralDecorator, args: () => [{ selector: '[ignored]' },] },
-    ];
-  `,
-};
-
-const INVALID_PROP_DECORATORS_FILE = {
-  name: '/invalid_prop_decorators.js',
-  contents: `
-    const NotObjectLiteralDecorator = {};
-    class NotObjectLiteral {
-    }
-    NotObjectLiteral.propDecorators = () => ({
-      "prop": [{ type: NotObjectLiteralDecorator },]
-    });
-
-    const NotObjectLiteralPropDecorator = {};
-    class NotObjectLiteralProp {
-    }
-    NotObjectLiteralProp.propDecorators = {
-      "prop": [
-        "This is not an object literal",
-        { type: NotObjectLiteralPropDecorator },
-      ]
-    };
-
-    const NoTypePropertyDecorator1 = {};
-    const NoTypePropertyDecorator2 = {};
-    class NoTypeProperty {
-    }
-    NoTypeProperty.propDecorators = {
-      "prop": [
-        { notType: NoTypePropertyDecorator1 },
-        { type: NoTypePropertyDecorator2 },
-      ]
-    };
-
-    const NotIdentifierDecorator = {};
-    class NotIdentifier {
-    }
-    NotIdentifier.propDecorators = {
-      "prop": [
-        { type: 'StringsLiteralsAreNotIdentifiers' },
-        { type: NotIdentifierDecorator },
-      ]
-    };
-  `,
-};
-
-const INVALID_PROP_DECORATOR_ARGS_FILE = {
-  name: '/invalid_prop_decorator_args.js',
-  contents: `
-    const NoArgsPropertyDecorator = {};
-    class NoArgsProperty {
-    }
-    NoArgsProperty.propDecorators = {
-      "prop": [{ type: NoArgsPropertyDecorator },]
-    };
-
-    const NoPropertyAssignmentDecorator = {};
-    const args = [{ selector: '[ignored]' },];
-    class NoPropertyAssignment {
-    }
-    NoPropertyAssignment.propDecorators = {
-      "prop": [{ type: NoPropertyAssignmentDecorator, args },]
-    };
-
-    const NotArrayLiteralDecorator = {};
-    class NotArrayLiteral {
-    }
-    NotArrayLiteral.propDecorators = {
-      "prop": [{ type: NotArrayLiteralDecorator, args: () => [{ selector: '[ignored]' },] },],
-    };
-  `,
-};
-
-const INVALID_CTOR_DECORATORS_FILE = {
-  name: '/invalid_ctor_decorators.js',
-  contents: `
-    const NoParametersDecorator = {};
-    class NoParameters {
-      constructor() {
-      }
-    }
-
-    const NotArrowFunctionDecorator = {};
-    class NotArrowFunction {
-      constructor(arg1) {
-      }
-    }
-    NotArrowFunction.ctorParameters = function() {
-      return { type: 'ParamType', decorators: [{ type: NotArrowFunctionDecorator },] };
-    };
-
-    const NotArrayLiteralDecorator = {};
-    class NotArrayLiteral {
-      constructor(arg1) {
-      }
-    }
-    NotArrayLiteral.ctorParameters = () => 'StringsAreNotArrayLiterals';
-
-    const NotObjectLiteralDecorator = {};
-    class NotObjectLiteral {
-      constructor(arg1, arg2) {
-      }
-    }
-    NotObjectLiteral.ctorParameters = () => [
-      "This is not an object literal",
-      { type: 'ParamType', decorators: [{ type: NotObjectLiteralDecorator },] },
-    ];
-
-    const NoTypePropertyDecorator1 = {};
-    const NoTypePropertyDecorator2 = {};
-    class NoTypeProperty {
-      constructor(arg1, arg2) {
-      }
-    }
-    NoTypeProperty.ctorParameters = () => [
-      {
-        type: 'ParamType',
-        decorators: [
-          { notType: NoTypePropertyDecorator1 },
-          { type: NoTypePropertyDecorator2 },
-        ]
-      },
-    ];
-
-    const NotIdentifierDecorator = {};
-    class NotIdentifier {
-      constructor(arg1, arg2) {
-      }
-    }
-    NotIdentifier.ctorParameters = () => [
-      {
-        type: 'ParamType',
-        decorators: [
-          { type: 'StringsLiteralsAreNotIdentifiers' },
-          { type: NotIdentifierDecorator },
-        ]
-      },
-    ];
-  `,
-};
-
-const INVALID_CTOR_DECORATOR_ARGS_FILE = {
-  name: '/invalid_ctor_decorator_args.js',
-  contents: `
-    const NoArgsPropertyDecorator = {};
-    class NoArgsProperty {
-      constructor(arg1) {
-      }
-    }
-    NoArgsProperty.ctorParameters = () => [
-      { type: 'ParamType', decorators: [{ type: NoArgsPropertyDecorator },] },
-    ];
-
-    const NoPropertyAssignmentDecorator = {};
-    const args = [{ selector: '[ignored]' },];
-    class NoPropertyAssignment {
-      constructor(arg1) {
-      }
-    }
-    NoPropertyAssignment.ctorParameters = () => [
-      { type: 'ParamType', decorators: [{ type: NoPropertyAssignmentDecorator, args },] },
-    ];
-
-    const NotArrayLiteralDecorator = {};
-    class NotArrayLiteral {
-      constructor(arg1) {
-      }
-    }
-    NotArrayLiteral.ctorParameters = () => [
-      { type: 'ParamType', decorators: [{ type: NotArrayLiteralDecorator, args: () => [{ selector: '[ignored]' },] },] },
-    ];
-  `,
-};
-
-const IMPORTS_FILES = [
+const CLASSES = [
   {
-    name: '/a.js',
+    name: '/src/class.js',
     contents: `
-      export const a = 'a';
+      export class NoTypeParam {}
+      export class OneTypeParam {}
+      export class TwoTypeParams {}
     `,
   },
   {
-    name: '/b.js',
+    name: '/typings/class.d.ts',
     contents: `
-      import {a} from './a.js';
-      import {a as foo} from './a.js';
-
-      const b = a;
-      const c = foo;
-      const d = b;
+      export class NoTypeParam {}
+      export class OneTypeParam<T> {}
+      export class TwoTypeParams<T, K> {}
     `,
   },
 ];
-
-const EXPORTS_FILES = [
-  {
-    name: '/a.js',
-    contents: `
-      export const a = 'a';
-    `,
-  },
-  {
-    name: '/b.js',
-    contents: `
-      import {Directive} from '@angular/core';
-      import {a} from './a';
-      import {a as foo} from './a';
-      export {Directive} from '@angular/core';
-      export {a} from './a';
-      export const b = a;
-      export const c = foo;
-      export const d = b;
-      export const e = 'e';
-      export const DirectiveX = Directive;
-      export class SomeClass {}
-    `,
-  },
-];
-
-const FUNCTION_BODY_FILE = {
-  name: '/function_body.js',
-  contents: `
-    function foo(x) {
-      return x;
-    }
-    function bar(x, y = 42) {
-      return x + y;
-    }
-    function baz(x) {
-      let y;
-      if (y === void 0) { y = 42; }
-      return x;
-    }
-    let y;
-    function qux(x) {
-      if (x === void 0) { y = 42; }
-      return y;
-    }
-    function moo() {
-      let x;
-      if (x === void 0) { x = 42; }
-      return x;
-    }
-    let x;
-    function juu() {
-      if (x === void 0) { x = 42; }
-      return x;
-    }
-  `
-};
 
 describe('Esm2015ReflectionHost', () => {
 
@@ -1108,6 +755,26 @@ describe('Esm2015ReflectionHost', () => {
       const host = new Esm2015ReflectionHost(program.getTypeChecker());
       const node = getDeclaration(program, FOO_FUNCTION_FILE.name, 'foo', ts.isFunctionDeclaration);
       expect(host.isClass(node)).toBe(false);
+    });
+  });
+
+  describe('getGenericArityOfClass()', () => {
+    it('should return null', () => {
+      // Mock out reading the `d.ts` file from disk
+      const readFileSyncSpy = spyOn(fs, 'readFileSync').and.returnValue(CLASSES[1].contents);
+      const program = makeProgram(CLASSES[0]);
+
+      const dtsMapper = new DtsMapper('/src', '/typings');
+      const host = new Esm2015ReflectionHost(program.getTypeChecker(), dtsMapper);
+      const noTypeParamClass =
+          getDeclaration(program, '/src/class.js', 'NoTypeParam', ts.isClassDeclaration);
+      expect(host.getGenericArityOfClass(noTypeParamClass)).toBe(0);
+      const oneTypeParamClass =
+          getDeclaration(program, '/src/class.js', 'OneTypeParam', ts.isClassDeclaration);
+      expect(host.getGenericArityOfClass(oneTypeParamClass)).toBe(1);
+      const twoTypeParamsClass =
+          getDeclaration(program, '/src/class.js', 'TwoTypeParams', ts.isClassDeclaration);
+      expect(host.getGenericArityOfClass(twoTypeParamsClass)).toBe(2);
     });
   });
 });
